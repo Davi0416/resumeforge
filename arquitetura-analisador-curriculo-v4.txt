@@ -1,0 +1,392 @@
+ARQUITETURA — ANALISADOR E REESCRITOR DE CURRÍCULOS COM IA (v4)
+================================================================
+Versão final consolidada. Incorpora revisão de Staff Engineer:
+pipeline multi-step, separação em camadas, resiliência de stream,
+validação de schema, detecção de modelo disponível e AbortController.
+
+
+VISÃO GERAL
+-----------
+Aplicação client-side (React) que recebe um currículo em texto, processa
+via modelo Llama rodando localmente com Ollama e entrega um relatório
+estruturado. A lógica é separada em três camadas (Service, Adapter,
+Orchestrator) para que nenhuma regra de negócio toque os componentes
+visuais. O pipeline roda em dois steps sequenciais com contexto
+compartilhado e cancelamento via AbortController.
+
+
+STACK
+-----
+- React + JavaScript (sem TypeScript por simplicidade inicial)
+- Ollama rodando localmente na máquina do usuário
+- Modelo recomendado: llama3.1 8B (quantizado 4-bit)
+- Sem backend externo, sem banco de dados, sem API key, sem custo
+
+
+REQUISITOS DO SISTEMA
+---------------------
+- RAM unificada ou VRAM mínima: 8GB
+  (modelo 8B 4-bit ≈ 5GB + KV Cache com num_ctx 4096 ≈ 1-2GB)
+- Ollama instalado: https://ollama.com
+- Modelo baixado: ollama pull llama3.1
+- Ollama iniciado com CORS liberado:
+    Linux/Mac:  OLLAMA_ORIGINS="*" ollama serve
+    Windows:    $env:OLLAMA_ORIGINS="*"; ollama serve
+
+
+INPUTS DO USUÁRIO
+-----------------
+1. Currículo (textarea)     — obrigatório, máximo 12.000 caracteres
+2. Descrição da vaga (textarea) — opcional, máximo 4.000 caracteres
+3. Modo de análise (seletor):
+   - Análise geral
+   - Otimizar para ATS
+   - Reescrever tudo
+
+Limite de caracteres escolhido para que currículo + vaga + prompts
+dos dois steps caibam dentro de 4096 tokens (regra: 1 token ≈ 3
+caracteres em português). Isso evita que o Ollama corte o input
+silenciosamente sem avisar.
+
+
+VALIDAÇÕES DE INPUT (antes de habilitar o botão)
+-------------------------------------------------
+1. Currículo não pode estar vazio
+2. Currículo não pode ultrapassar 12.000 caracteres
+3. Vaga não pode ultrapassar 4.000 caracteres
+4. Estimativa de tokens: (len(curriculo) + len(vaga)) / 3
+   Se estimativa > 3.200 tokens → alerta inline antes de enviar
+5. Verificação de modelo disponível via GET /api/tags antes de rodar
+   o pipeline (ver seção "Pré-checagem de modelo")
+
+
+PRÉ-CHECAGEM DE MODELO
+-----------------------
+Antes de iniciar o pipeline, fazer:
+
+  GET http://localhost:11434/api/tags
+
+Verificar se "llama3.1" está na lista retornada.
+- Se não estiver → exibir erro com lista dos modelos instalados
+  e instrução: "ollama pull llama3.1"
+- Se o Ollama estiver offline → capturar o erro de rede e exibir:
+  "Ollama não está rodando. Inicie com: OLLAMA_ORIGINS='*' ollama serve"
+
+
+SEPARAÇÃO EM CAMADAS
+---------------------
+Nenhuma regra de negócio fica dentro de componentes React.
+O componente só chama o Orchestrator e atualiza o estado.
+
+  src/
+  ├── services/
+  │   └── OllamaService.js       <- comunicação com a API do Ollama
+  ├── adapters/
+  │   └── StreamAdapter.js       <- leitura do ReadableStream e acúmulo de chunks
+  ├── orchestrators/
+  │   └── AnalysisOrchestrator.js <- coordena Step 1 e Step 2
+  ├── validators/
+  │   ├── InputValidator.js       <- valida tamanho e tokens dos inputs
+  │   └── SchemaValidator.js      <- valida o JSON parseado contra o schema esperado
+  ├── prompts/
+  │   ├── step1Prompt.js          <- monta o prompt do Step 1
+  │   └── step2Prompt.js          <- monta o prompt do Step 2 (inclui output do Step 1)
+  └── components/
+      └── App.jsx                 <- UI pura, zero lógica de negócio
+
+
+RESPONSABILIDADES DE CADA CAMADA
+----------------------------------
+
+OllamaService.js
+  - Recebe prompt e AbortSignal
+  - Faz o POST em /api/generate com stream: true
+  - Retorna o ReadableStream bruto
+  - Não sabe nada sobre o conteúdo do prompt
+
+  async function generate(prompt, signal) {
+    const res = await fetch('http://localhost:11434/api/generate', {
+      method: 'POST',
+      signal,
+      body: JSON.stringify({
+        model: 'llama3.1',
+        prompt,
+        stream: true,
+        format: 'json',
+        options: { num_ctx: 4096 }
+      })
+    });
+    return res.body;
+  }
+
+StreamAdapter.js
+  - Recebe o ReadableStream do OllamaService
+  - Lê chunk a chunk e acumula o campo "response" de cada linha JSON
+  - Para quando recebe "done": true
+  - Sanitiza o texto acumulado (remove backticks de Markdown)
+  - Faz o JSON.parse()
+  - Retorna o objeto parseado ou lança erro
+
+  async function collect(stream) {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let raw = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = JSON.parse(decoder.decode(value));
+      raw += chunk.response;
+      if (chunk.done) break;
+    }
+    return parseJSON(raw);
+  }
+
+  function parseJSON(text) {
+    const clean = text.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean); // lança SyntaxError se inválido
+  }
+
+SchemaValidator.js
+  - Valida se o objeto parseado tem os campos obrigatórios do schema
+  - Se um campo obrigatório faltar ou tiver tipo errado → lança erro
+  - Não usa biblioteca externa, validação manual por campo
+
+  function validateStep1(obj) {
+    const required = ['scores', 'resumo'];
+    const scoreFields = ['impacto', 'clareza', 'palavras_chave', 'geral'];
+    // verifica presença e tipos
+  }
+
+  function validateStep2(obj) {
+    const required = ['mudancas', 'prompt_externo'];
+    // verifica que mudancas é array com mínimo 1 item
+    // verifica campos de cada item do array
+  }
+
+AnalysisOrchestrator.js
+  - Coordena o pipeline completo
+  - Cria e gerencia o AbortController
+  - Chama Step 1 → valida → passa resultado pro prompt do Step 2
+  - Chama Step 2 → valida → retorna resultado consolidado
+  - Expõe método cancel() para a UI interromper o pipeline
+
+  async function run({ resume, job, mode }, callbacks, signal) {
+    const stream1 = await OllamaService.generate(buildStep1Prompt(...), signal);
+    const result1 = await StreamAdapter.collect(stream1);
+    SchemaValidator.validateStep1(result1);
+    callbacks.onStep1Complete(result1);
+
+    const stream2 = await OllamaService.generate(buildStep2Prompt(..., result1), signal);
+    const result2 = await StreamAdapter.collect(stream2);
+    SchemaValidator.validateStep2(result2);
+    callbacks.onStep2Complete(result2);
+  }
+
+
+PIPELINE MULTI-STEP (fluxo detalhado)
+--------------------------------------
+O modelo é stateless entre chamadas. O Step 2 recebe o JSON do Step 1
+embutido no prompt para manter consistência entre diagnóstico e sugestões.
+
+Step 1 — Diagnóstico
+  Input:  currículo + modo
+  Output: { scores, resumo }
+  Ação:   renderizar Score Cards assim que concluir
+
+Step 2 — Ação
+  Input:  currículo + vaga (se houver) + modo + JSON completo do Step 1
+  Output: { mudancas, adaptacao_vaga (se vaga), prompt_externo }
+  Ação:   renderizar abas de resultado
+
+Isolamento de falha: se o Step 2 falhar, o Step 1 ainda é exibido.
+A UI mostra os scores e o resumo com um aviso de que as sugestões
+não puderam ser geradas, com botão "Tentar etapa 2 novamente".
+
+
+CHAMADA AO OLLAMA
+-----------------
+Endpoint: POST http://localhost:11434/api/generate
+
+{
+  "model": "llama3.1",
+  "prompt": "<prompt da etapa>",
+  "stream": true,
+  "format": "json",
+  "options": {
+    "num_ctx": 4096
+  }
+}
+
+- num_ctx: 4096 é o valor conservador. Evita estourar RAM em máquinas
+  com 8GB unificados. Só subir para 8192 se os testes mostrarem que
+  o currículo está sendo cortado.
+- stream: true permite feedback visual e evita que o usuário ache
+  que a aplicação travou (inferência pode levar 30-90s em CPU).
+- format: "json" força output JSON nativo do Ollama.
+
+
+ABAS DE OUTPUT
+--------------
+| Aba              | Condição de exibição                  | Disponível após |
+|------------------|---------------------------------------|-----------------|
+| Análise          | sempre                                | Step 1          |
+| Mudanças         | sempre                                | Step 2          |
+| Adaptar à vaga   | apenas se a vaga foi preenchida       | Step 2          |
+| Prompt pronto    | sempre                                | Step 2          |
+
+Score Cards aparecem assim que o Step 1 termina.
+As abas aparecem assim que o Step 2 termina.
+Nunca renderizar resultado parcial misturado com estado vazio.
+
+
+SCHEMAS JSON
+------------
+
+Step 1 — retorno esperado:
+{
+  "scores": {
+    "impacto":        <inteiro 1-10>,
+    "clareza":        <inteiro 1-10>,
+    "palavras_chave": <inteiro 1-10>,
+    "geral":          <inteiro 1-10>
+  },
+  "resumo": "<string, parágrafo único de diagnóstico>"
+}
+
+Step 2 — retorno esperado:
+{
+  "mudancas": [                          <- array, mínimo 5, máximo 10 itens
+    {
+      "tipo":      "add | edit | remove | rewrite",
+      "titulo":    "<string curta>",
+      "descricao": "<string explicando o que mudar e por quê>",
+      "exemplo":   "<string com antes → depois ou texto sugerido>"
+    }
+  ],
+  "adaptacao_vaga": {                    <- omitir se não houver vaga
+    "match_score":      <inteiro 1-10>,
+    "palavras_faltando": ["string"],
+    "secoes_adaptar": [
+      {
+        "secao":    "<nome da seção>",
+        "motivo":   "<por que adaptar>",
+        "sugestao": "<texto reescrito>"
+      }
+    ],
+    "o_que_destacar": "<string>",
+    "o_que_remover":  "<string>"
+  },
+  "prompt_externo": "<string autocontida com currículo + instruções>"
+}
+
+
+TIPOS DE MUDANÇA (campo "tipo")
+--------------------------------
+- add     → adicionar algo que está faltando
+- edit    → ajustar algo que existe mas está fraco
+- remove  → remover algo desnecessário ou prejudicial
+- rewrite → reescrever um trecho inteiro com nova linguagem
+
+
+GERENCIAMENTO DE CANCELAMENTO
+------------------------------
+- Um AbortController é criado no início de cada pipeline
+- O signal é passado para cada chamada ao OllamaService
+- A UI expõe um botão "Cancelar" durante o estado streaming
+- Ao cancelar: AbortController.abort() → fetch lança AbortError
+  → StreamAdapter captura → Orchestrator propaga → UI volta para idle
+- O flag isProcessing bloqueia qualquer nova chamada enquanto o
+  pipeline estiver em andamento (botão "Analisar" desabilitado
+  durante todo o Step 1 + Step 2, não só durante cada step)
+
+
+ESTADOS DA APLICAÇÃO
+---------------------
+- idle       → aguardando input
+- checking   → verificando se o Ollama e o modelo estão disponíveis
+- streaming  → pipeline em andamento (Step 1 ou Step 2)
+- partial    → Step 1 concluído, Step 2 falhou (scores visíveis, sugestões não)
+- success    → pipeline completo, todas as abas visíveis
+- error      → falha antes ou durante o Step 1
+
+Mensagens de erro específicas:
+- CORS bloqueado      → "Inicie o Ollama com OLLAMA_ORIGINS='*' ollama serve"
+- Ollama offline      → "Ollama não está rodando. Execute: ollama serve"
+- Modelo ausente      → "Modelo não encontrado. Execute: ollama pull llama3.1"
+                         + lista dos modelos instalados disponíveis
+- Falha de parse      → "O modelo retornou formato inválido. Tente novamente."
+- Schema inválido     → "Resposta incompleta. Tente novamente."
+- AbortError          → silencioso, UI volta para idle sem mensagem de erro
+- Timeout (120s)      → "A análise demorou demais. Tente um currículo menor."
+
+
+TIMEOUT
+-------
+- AbortController com timeout de 120 segundos por step
+- Se o Ollama não emitir "done": true dentro do prazo, o stream
+  é abortado e o estado de erro é exibido
+- Implementação: setTimeout(() => controller.abort(), 120000)
+
+
+COMPONENTES DA UI (React)
+--------------------------
+- <App />              → estado global, chama o Orchestrator
+- <InputPanel />       → textareas, contador de chars, seletor de modo
+- <AnalyzeButton />    → habilitado/desabilitado, botão cancelar
+- <StatusIndicator />  → texto de progresso durante streaming
+- <ScoreCards />       → renderiza após Step 1
+- <ResultTabs />       → renderiza após Step 2 (abas condicionais)
+- <CopyPromptButton /> → copia o prompt_externo para o clipboard
+
+O componente <App /> é o único que conhece o estado global.
+Todos os outros recebem dados via props e disparam callbacks.
+Nenhum componente chama OllamaService diretamente.
+
+
+ORDEM DE IMPLEMENTAÇÃO
+-----------------------
+Fase 1 — Infraestrutura e checagem
+  - Setup do projeto React (Vite)
+  - OllamaService.js com suporte a AbortSignal
+  - Pré-checagem via GET /api/tags
+  - Teste manual de CORS no navegador
+
+Fase 2 — Stream e parse
+  - StreamAdapter.js com leitura de ReadableStream
+  - SchemaValidator.js para Step 1 e Step 2
+  - Testes unitários das funções de sanitização e validação
+
+Fase 3 — Prompts e modelo
+  - step1Prompt.js e step2Prompt.js
+  - Testes dos três modos direto no terminal: ollama run llama3.1
+  - Ajuste fino até o JSON sair consistente nas duas etapas
+  - Validar que o Step 2 usa o output do Step 1 no prompt
+
+Fase 4 — Orchestrator e estado
+  - AnalysisOrchestrator.js com AbortController e timeout
+  - Máquina de estados no App.jsx
+  - Tratamento do estado "partial" (Step 1 ok, Step 2 falhou)
+
+Fase 5 — Interface
+  - Componentes de input com validação e contador
+  - Score Cards (renderiza após Step 1)
+  - Abas de resultado condicionais (renderiza após Step 2)
+  - Botão cancelar e mensagens de erro granulares
+
+Fase 6 — Finalização
+  - Botão "Copiar prompt externo"
+  - Testes end-to-end com currículo real
+  - Polimento visual e responsividade
+
+
+EXTENSÕES FUTURAS (fora do escopo atual)
+-----------------------------------------
+- Seletor de modelo na UI (trocar entre llama3.1, mistral, gemma...)
+  usando a lista retornada pelo GET /api/tags
+- Lista de palavras-chave hardcoded por área (backend, dados, design)
+  para enriquecer o modo ATS sem depender do modelo
+- Export do relatório como PDF ou .txt
+- Histórico local de análises via localStorage
+- Campo para idioma alvo (PT / EN)
+- Estimativa de tempo restante baseada na velocidade de tokens/s
+  retornada pelo Ollama no campo "eval_duration"
