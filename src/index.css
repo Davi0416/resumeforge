@@ -656,6 +656,110 @@ input[type="password"]:focus, input[type="text"]:focus {
 }
 .btn-danger-sm:hover { background: rgba(239,68,68,.22); }
 
+/* ── Reconstruct Panel ───────────────────────────────────────── */
+.reconstruct-section {
+  border-top: 1px solid var(--color-border);
+  padding-top: 2rem;
+}
+
+.reconstruct-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.5rem;
+}
+
+.reconstruct-header h2 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-bottom: .5rem;
+}
+
+.reconstruct-desc {
+  color: var(--color-text-muted);
+  font-size: .875rem;
+  line-height: 1.6;
+}
+
+.reconstruct-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.field-hint {
+  color: var(--color-text-muted);
+  font-size: .78rem;
+  margin-top: .25rem;
+  display: block;
+}
+
+.reconstruct-actions {
+  display: flex;
+  gap: .75rem;
+}
+
+.btn-reconstruct {
+  padding: .75rem 1.5rem;
+  font-size: 1rem;
+}
+
+.reconstruct-progress {
+  align-items: center;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+}
+
+.progress-spinner {
+  animation: spin 1s linear infinite;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  flex-shrink: 0;
+  height: 24px;
+  width: 24px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.progress-text {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+}
+
+.progress-detail {
+  color: var(--color-text-muted);
+  font-size: .8rem;
+}
+
+.reconstruct-done {
+  align-items: center;
+  background: rgba(16,185,129,.08);
+  border: 1px solid rgba(16,185,129,.25);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: .75rem;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.done-icon { font-size: 2.5rem; }
+
+.btn-download {
+  font-size: .95rem;
+  padding: .75rem 1.5rem;
+  text-decoration: none !important;
+}
+
 /* ── Responsive ──────────────────────────────────────────────── */
 @media (max-width: 600px) {
   .app { padding: 1rem .75rem 3rem; }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import * as HistoryService from '../services/HistoryService.js'
+import { getHistory, deleteHistory } from '../services/ApiService.js'
 
 function formatDate(iso) {
   return new Date(iso).toLocaleString('pt-BR', {
@@ -9,7 +9,7 @@ function formatDate(iso) {
 }
 
 function ScoreBadge({ label, value }) {
-  const color = value >= 7 ? 'var(--score-high)' : value >= 5 ? 'var(--score-mid)' : 'var(--score-low)'
+  const color = value >= 7 ? 'var(--color-high)' : value >= 5 ? 'var(--color-mid)' : 'var(--color-low)'
   return (
     <span className="history-score-badge" style={{ '--badge-color': color }}>
       {label} {value}
@@ -23,20 +23,18 @@ export default function HistoryPanel({ onClose }) {
   const [expanded, setExpanded] = useState(null)
 
   useEffect(() => {
-    HistoryService.getAll()
-      .then(setEntries)
-      .finally(() => setLoading(false))
+    getHistory().then(setEntries).finally(() => setLoading(false))
   }, [])
 
   async function handleRemove(id) {
-    await HistoryService.remove(id)
-    setEntries((prev) => prev.filter((e) => e.id !== id))
+    await deleteHistory(id)
+    setEntries(prev => prev.filter(e => e.id !== id))
     if (expanded === id) setExpanded(null)
   }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content history-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-content history-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2>Histórico de análises</h2>
           <button className="modal-close" onClick={onClose}>✕</button>
@@ -45,19 +43,16 @@ export default function HistoryPanel({ onClose }) {
         {loading && <p className="history-empty">Carregando...</p>}
 
         {!loading && entries.length === 0 && (
-          <p className="history-empty">
-            Nenhuma análise salva ainda. Complete uma análise para ela aparecer aqui.
-          </p>
+          <p className="history-empty">Nenhuma análise salva ainda. Complete uma análise para ela aparecer aqui.</p>
         )}
 
         {!loading && entries.length > 0 && (
           <div className="history-list">
             <p className="history-meta">
               {entries.length} análise{entries.length !== 1 ? 's' : ''} salva{entries.length !== 1 ? 's' : ''}.
-              Os melhores e piores exemplos são usados automaticamente para calibrar as próximas análises.
+              Os melhores e piores exemplos calibram automaticamente as próximas análises.
             </p>
-
-            {entries.map((entry) => {
+            {entries.map(entry => {
               const scores = entry.step1Result?.scores
               const isOpen = expanded === entry.id
               return (
@@ -77,20 +72,14 @@ export default function HistoryPanel({ onClose }) {
                     )}
                     <span className="history-toggle">{isOpen ? '▲' : '▼'}</span>
                   </div>
-
                   {isOpen && (
                     <div className="history-entry-body">
-                      {entry.step1Result?.resumo && (
-                        <p className="history-resumo">{entry.step1Result.resumo}</p>
-                      )}
+                      {entry.step1Result?.resumo && <p className="history-resumo">{entry.step1Result.resumo}</p>}
                       <div className="history-resume-preview">
                         <strong>Trecho do currículo:</strong>
                         <pre>{entry.resumeText.slice(0, 300)}{entry.resumeText.length > 300 ? '...' : ''}</pre>
                       </div>
-                      <button
-                        className="btn btn-danger-sm"
-                        onClick={() => handleRemove(entry.id)}
-                      >
+                      <button className="btn btn-danger-sm" onClick={() => handleRemove(entry.id)}>
                         🗑 Remover do histórico
                       </button>
                     </div>

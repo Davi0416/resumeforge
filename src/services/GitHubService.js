@@ -1,95 +1,99 @@
 /**
- * GitHubService — lê perfis e repositórios públicos do GitHub.
- *
- * Usa a API REST pública (60 req/hora sem token, 5000 com token).
- * Token opcional configurado via SettingsModal.
+ * GitHubService — acessa a API do GitHub para buscar repositórios e conteúdo.
  */
 
-const BASE = 'https://api.github.com'
+const GITHUB_API = 'https://api.github.com'
+const STORAGE_KEY = 'resumeforge_github_token'
 
-function headers(token) {
-  const h = { Accept: 'application/vnd.github+json' }
-  if (token) h['Authorization'] = `Bearer ${token}`
-  return h
+export function saveToken(token) {
+  if (token) localStorage.setItem(STORAGE_KEY, token.trim())
+  else localStorage.removeItem(STORAGE_KEY)
 }
 
-/**
- * Extrai o username de uma URL do GitHub ou retorna o valor direto.
- * Aceita: "torvalds", "https://github.com/torvalds", "github.com/torvalds"
- */
-export function parseUsername(input) {
-  const clean = input.trim().replace(/\/$/, '')
-  const match = clean.match(/github\.com\/([^/?#]+)/)
-  return match ? match[1] : clean
+export function getToken() {
+  return localStorage.getItem(STORAGE_KEY) || ''
 }
 
-/**
- * Busca todos os repositórios públicos do usuário, ordenados por estrelas.
- * Retorna array de objetos simplificados.
- */
-export async function fetchRepos(username, token) {
-  const url = `${BASE}/users/${username}/repos?sort=updated&per_page=100&type=public`
-  const res = await fetch(url, { headers: headers(token) })
+export function clearToken() {
+  localStorage.removeItem(STORAGE_KEY)
+}
 
-  if (res.status === 404) throw new Error(`Usuário "${username}" não encontrado no GitHub.`)
-  if (res.status === 403) throw new Error('Rate limit do GitHub atingido. Adicione um token nas Configurações.')
-  if (!res.ok) throw new Error(`Erro ao acessar GitHub: status ${res.status}`)
+function headers() {
+  const token = getToken()
+  return {
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
+}
 
-  const data = await res.json()
+async function ghFetch(path) {
+  const res = await fetch(`${GITHUB_API}${path}`, { headers: headers() })
+  if (res.status === 401) throw new Error('Token invalido ou expirado.')
+  if (res.status === 403) throw new Error('Rate limit atingido. Adicione um token nas configuracoes.')
+  if (res.status === 404) throw new Error(`Usuario ou recurso nao encontrado: ${path}`)
+  if (!res.ok) throw new Error(`GitHub retornou status ${res.status}`)
+  return res.json()
+}
 
-  return data
-    .filter(r => !r.fork) // ignora forks
-    .map(r => ({
+export async function getUser(username) {
+  const path = username ? `/users/${username}` : '/user'
+  return ghFetch(path)
+}
+
+export async function getRepos(username, maxRepos = 15) {
+  const path = username
+    ? `/users/${username}/repos?sort=pushed&per_page=50&type=all`
+    : `/user/repos?sort=pushed&per_page=50&affiliation=owner`
+
+  const repos = await ghFetch(path)
+
+  return repos
+    .filter((r) => !(r.fork && r.stargazers_count === 0))
+    .slice(0, maxRepos)
+    .map((r) => ({
       name: r.name,
-      full_name: r.full_name,
+      fullName: r.full_name,
       description: r.description || '',
+      language: r.language || '',
       stars: r.stargazers_count,
       forks: r.forks_count,
-      language: r.language || '',
-      topics: r.topics || [],
-      updated_at: r.updated_at,
+      fork: r.fork,
+      isPrivate: r.private,
       url: r.html_url,
-      homepage: r.homepage || '',
+      pushedAt: r.pushed_at,
+      topics: r.topics || [],
     }))
-    .sort((a, b) => b.stars - a.stars)
 }
 
-/**
- * Busca README e linguagens dos top N repositórios.
- * Retorna os repos enriquecidos com readme_excerpt e languages.
- */
-export async function fetchRepoDetails(repos, token, topN = 12) {
-  const top = repos.slice(0, topN)
+export async function getLanguages(fullName) {
+  try {
+    return await ghFetch(`/repos/${fullName}/languages`)
+  } catch {
+    return {}
+  }
+}
 
-  const enriched = await Promise.allSettled(
-    top.map(async (repo) => {
-      const [readmeRes, langsRes] = await Promise.allSettled([
-        fetch(`${BASE}/repos/${repo.full_name}/readme`, { headers: headers(token) }),
-        fetch(`${BASE}/repos/${repo.full_name}/languages`, { headers: headers(token) }),
-      ])
+export async function getReadme(fullName) {
+  try {
+    const data = await ghFetch(`/repos/${fullName}/readme`)
+    const decoded = atob(data.content.replace(/\n/g, ''))
+    return decoded.slice(0, 2000)
+  } catch {
+    return ''
+  }
+}
 
-      let readme = ''
-      if (readmeRes.status === 'fulfilled' && readmeRes.value.ok) {
-        const data = await readmeRes.value.json()
-        const decoded = atob(data.content.replace(/\n/g, ''))
-        // Pega só os primeiros 600 chars do README para não sobrecarregar o prompt
-        readme = decoded.slice(0, 600).replace(/[#*`]/g, '').trim()
-      }
-
-      let languages = {}
-      if (langsRes.status === 'fulfilled' && langsRes.value.ok) {
-        languages = await langsRes.value.json()
-      }
-
-      return {
-        ...repo,
-        readme_excerpt: readme,
-        languages: Object.keys(languages).slice(0, 6),
-      }
-    })
-  )
-
+export async function enrichRepos(repos, onProgress) {
+  const enriched = []
+  for (let i = 0; i < repos.length; i++) {
+    const repo = repos[i]
+    onProgress?.({ current: i + 1, total: repos.length, name: repo.name })
+    const [languages, readme] = await Promise.all([
+      getLanguages(repo.fullName),
+      getReadme(repo.fullName),
+    ])
+    enriched.push({ ...repo, languages, readme })
+  }
   return enriched
-    .filter(r => r.status === 'fulfilled')
-    .map(r => r.value)
 }
