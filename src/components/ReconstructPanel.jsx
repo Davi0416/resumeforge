@@ -7,8 +7,42 @@ const STEPS = {
   evaluating: 'Avaliando projetos com IA...',
   reconstructing: 'Reconstruindo currículo...',
   generating: 'Gerando arquivo Word...',
+  scoring: 'Calculando melhoria...',
   done: 'Concluído!',
   error: null,
+}
+
+const SCORE_LABELS = { geral: 'Geral', impacto: 'Impacto', clareza: 'Clareza', palavras_chave: 'Keywords' }
+
+function ScoreComparison({ before, after }) {
+  if (!before && !after) return null
+  const keys = Object.keys(SCORE_LABELS)
+  return (
+    <div className="score-comparison">
+      <h3 className="score-comparison-title">📊 Antes × Depois</h3>
+      <div className="score-comparison-grid">
+        {keys.map(key => {
+          const a = before?.[key]
+          const b = after?.[key]
+          const diff = (a != null && b != null) ? (b - a) : null
+          const diffColor = diff > 0 ? 'var(--color-high)' : diff < 0 ? 'var(--color-low)' : 'var(--color-mid)'
+          return (
+            <div key={key} className="score-comparison-row">
+              <span className="score-comparison-label">{SCORE_LABELS[key]}</span>
+              <span className="score-comparison-before">{a != null ? a.toFixed(1) : '—'}</span>
+              <span className="score-comparison-arrow">→</span>
+              <span className="score-comparison-after">{b != null ? b.toFixed(1) : '—'}</span>
+              {diff != null && (
+                <span className="score-comparison-diff" style={{ color: diffColor }}>
+                  {diff > 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)}
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 export default function ReconstructPanel({ resume, job, mode, step1Result }) {
@@ -19,13 +53,15 @@ export default function ReconstructPanel({ resume, job, mode, step1Result }) {
   const [warning, setWarning]   = useState(null)
   const [downloadUrl, setDownloadUrl]   = useState(null)
   const [downloadName, setDownloadName] = useState('curriculo-reconstruido.docx')
+  const [scoresBefore, setScoresBefore] = useState(null)
+  const [scoresAfter, setScoresAfter]   = useState(null)
   const cancelRef = useRef(null)
 
   const isRunning = state !== 'idle' && state !== 'done' && state !== 'error'
 
   function handleStart() {
     if (!resume.trim()) return
-    setErrorMsg(null); setWarning(null); setDownloadUrl(null)
+    setErrorMsg(null); setWarning(null); setDownloadUrl(null); setScoresBefore(null); setScoresAfter(null)
     setState('fetching'); setProgress(null)
 
     const handle = reconstruct(
@@ -35,11 +71,14 @@ export default function ReconstructPanel({ resume, job, mode, step1Result }) {
         onEvaluating:     ()  => { setState('evaluating'); setProgress(null) },
         onReconstructing: ()  => setState('reconstructing'),
         onGeneratingDocx: ()  => setState('generating'),
+        onScoring:        ()  => setState('scoring'),
         onGithubWarning:  (msg) => setWarning(msg),
-        onComplete: (blob, _data, filename) => {
+        onComplete: (blob, _data, filename, scoresBef, scoresAft) => {
           const url = URL.createObjectURL(blob)
           setDownloadUrl(url)
           setDownloadName(filename || 'curriculo-reconstruido.docx')
+          setScoresBefore(scoresBef || null)
+          setScoresAfter(scoresAft || null)
           setState('done')
           cancelRef.current = null
         },
@@ -55,6 +94,7 @@ export default function ReconstructPanel({ resume, job, mode, step1Result }) {
   function handleReset() {
     if (downloadUrl) URL.revokeObjectURL(downloadUrl)
     setDownloadUrl(null); setState('idle'); setErrorMsg(null); setWarning(null); setProgress(null)
+    setScoresBefore(null); setScoresAfter(null)
   }
 
   return (
@@ -125,6 +165,12 @@ export default function ReconstructPanel({ resume, job, mode, step1Result }) {
           <a href={downloadUrl} download={downloadName} className="btn btn-primary btn-download">
             ⬇ Baixar {downloadName}
           </a>
+          <ScoreComparison before={scoresBefore} after={scoresAfter} />
+          {!scoresAfter && (
+            <p className="score-comparison-hint">
+              Complete uma análise antes de reconstruir para ver a comparação de scores.
+            </p>
+          )}
         </div>
       )}
     </div>

@@ -101,10 +101,11 @@ export function reconstruct({ resume, job, mode, githubUsername, step1Result }, 
           case 'evaluating':       callbacks.onEvaluating?.(); break
           case 'reconstructing':   callbacks.onReconstructing?.(); break
           case 'generating_docx':  callbacks.onGeneratingDocx?.(); break
+          case 'scoring':          callbacks.onScoring?.(); break
           case 'complete': {
             const bytes = Uint8Array.from(atob(payload.docx_b64), c => c.charCodeAt(0))
             const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
-            callbacks.onComplete?.(blob, payload.data, payload.filename)
+            callbacks.onComplete?.(blob, payload.data, payload.filename, payload.scores_antes, payload.scores_depois)
             break
           }
           case 'error': callbacks.onError?.(payload.message); break

@@ -760,6 +760,74 @@ input[type="password"]:focus, input[type="text"]:focus {
   text-decoration: none !important;
 }
 
+/* ── Score Comparison ────────────────────────────────────────── */
+.score-comparison {
+  width: 100%;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.25rem;
+  text-align: left;
+}
+
+.score-comparison-title {
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: .75rem;
+}
+
+.score-comparison-grid {
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+}
+
+.score-comparison-row {
+  display: grid;
+  grid-template-columns: 6rem 2.5rem 1rem 2.5rem 3rem;
+  align-items: center;
+  gap: .5rem;
+  font-size: .9rem;
+}
+
+.score-comparison-label {
+  color: var(--color-text-muted);
+  font-size: .85rem;
+}
+
+.score-comparison-before {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.score-comparison-arrow {
+  color: var(--color-border);
+  text-align: center;
+}
+
+.score-comparison-after {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  text-align: right;
+}
+
+.score-comparison-diff {
+  font-size: .85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-comparison-hint {
+  font-size: .82rem;
+  color: var(--color-text-muted);
+  margin-top: .25rem;
+}
+
 /* ── Responsive ──────────────────────────────────────────────── */
 @media (max-width: 600px) {
   .app { padding: 1rem .75rem 3rem; }

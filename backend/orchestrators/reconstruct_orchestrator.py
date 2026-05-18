@@ -2,7 +2,53 @@ import json, base64
 from backend.services import ollama_service, github_service
 from backend.prompts.github_eval_prompt import build_github_eval_prompt
 from backend.prompts.reconstruct_prompt import build_reconstruct_prompt
+from backend.prompts.step1_prompt import build_step1_prompt
 from backend.adapters.docx_adapter import generate_docx
+from backend.validators.schema_validator import validate_step1
+
+def _reconstructed_to_text(data: dict) -> str:
+    """Converte o JSON do currículo reconstruído em texto legível para análise."""
+    lines = []
+    if nome := data.get("nome"):
+        lines.append(nome)
+    if titulo := data.get("titulo"):
+        lines.append(titulo)
+    c = data.get("contato", {})
+    contact = " | ".join(v for v in [c.get("email"), c.get("linkedin"), c.get("github"), c.get("localizacao")] if v)
+    if contact:
+        lines.append(contact)
+    if resumo := data.get("resumo_profissional"):
+        lines.append(f"\nRESUMO PROFISSIONAL\n{resumo}")
+    if exps := data.get("experiencia"):
+        lines.append("\nEXPERIÊNCIA PROFISSIONAL")
+        for e in exps:
+            lines.append(f"{e.get('cargo','')} @ {e.get('empresa','')} ({e.get('periodo','')})")
+            for r in e.get("responsabilidades", []):
+                lines.append(f"  • {r}")
+    if projs := data.get("projetos"):
+        lines.append("\nPROJETOS")
+        for p in projs:
+            techs = ", ".join(p.get("tecnologias", []))
+            lines.append(f"{p.get('nome','')} [{techs}]")
+            if d := p.get("descricao"):
+                lines.append(f"  {d}")
+    h = data.get("habilidades", {})
+    skill_parts = []
+    for k in ("linguagens", "frameworks", "ferramentas", "outros"):
+        if v := h.get(k):
+            skill_parts.append(f"{k.capitalize()}: {', '.join(v)}")
+    if skill_parts:
+        lines.append("\nHABILIDADES\n" + "\n".join(skill_parts))
+    if fms := data.get("formacao"):
+        lines.append("\nFORMAÇÃO")
+        for f in fms:
+            lines.append(f"{f.get('curso','')} — {f.get('instituicao','')} ({f.get('ano_conclusao','')})")
+    if idiomas := data.get("idiomas"):
+        parts = [f"{i.get('idioma','')} ({i.get('nivel','')})" for i in idiomas]
+        lines.append(f"\nIDIOMAS\n{' • '.join(parts)}")
+    if certs := data.get("certificacoes"):
+        lines.append(f"\nCERTIFICAÇÕES\n" + "\n".join(f"• {c}" for c in certs))
+    return "\n".join(lines)
 
 def _sse(event: str, data: dict | str) -> str:
     payload = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
@@ -66,6 +112,18 @@ async def stream_reconstruct(resume: str, job: str, mode: str,
         yield _sse("error", {"message": f"Erro ao gerar arquivo Word: {e}"})
         return
 
+    # 7. Analisar currículo reconstruído para comparação de scores
+    yield _sse("scoring", {})
+    new_scores = None
+    try:
+        reconstructed_text = _reconstructed_to_text(reconstructed)
+        score_prompt = build_step1_prompt(reconstructed_text, mode)
+        raw_score = await ollama_service.generate_stream(score_prompt)
+        new_step1  = validate_step1(raw_score)
+        new_scores = new_step1.model_dump()["scores"]
+    except Exception:
+        pass  # scores opcionais — não quebra o fluxo
+
     name = reconstructed.get("nome", "candidato").replace(" ", "-").lower()
     filename = f"curriculo-{name}.docx"
 
@@ -73,4 +131,6 @@ async def stream_reconstruct(resume: str, job: str, mode: str,
         "docx_b64": docx_b64,
         "filename": filename,
         "data": reconstructed,
+        "scores_antes": step1_result.get("scores") if step1_result else None,
+        "scores_depois": new_scores,
     })
